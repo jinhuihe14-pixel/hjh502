@@ -1,0 +1,14 @@
+{
+  "name": "indoor-playground-system",
+  "version": "1.0.0",
+  "description": "室内亲子淘气堡乐园全栈系统",
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:h5": "cd h5 && npm run dev",
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install && cd ../h5 && npm install"
+  },
+  "keywords": ["playground", "membership", "pos"],
+  "author": "",
+  "license": "MIT"
+}
