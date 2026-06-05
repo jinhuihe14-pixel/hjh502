@@ -24,7 +24,7 @@
         </el-table-column>
         <el-table-column prop="commission_rate" label="佣金比例(%)" width="150">
           <template #default="{ row }">
-            {{ row.commission_type === 'rate' ? row.commission_rate : '-' }}
+            {{ row.commission_type === 'percentage' || row.commission_type === 'rate' ? row.commission_rate : '-' }}
           </template>
         </el-table-column>
         <el-table-column prop="fixed_amount" label="固定金额" width="150">
@@ -40,7 +40,7 @@
       </el-table>
     </el-card>
 
-    <el-card class="statistics-card" style="margin-top: 20px">
+    <el-card class="records-card" style="margin-top: 20px">
       <template #header>
         <div class="card-header">
           <span>日佣金统计</span>
@@ -55,43 +55,50 @@
         </div>
       </template>
 
-      <el-tabs v-model="activeTab">
-        <el-tab-pane label="销售佣金" name="sales">
-          <el-table :data="dailySalesCommissions" border>
-            <el-table-column prop="employee_name" label="员工姓名" width="150" />
-            <el-table-column prop="card_count" label="办卡数量" width="120" />
-            <el-table-column prop="total_sales" label="业绩金额" width="150">
-              <template #default="{ row }">
-                ¥{{ row.total_sales || 0 }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="commission" label="佣金金额" width="150">
-              <template #default="{ row }">
-                ¥{{ row.commission || 0 }}
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-empty v-if="dailySalesCommissions.length === 0" description="暂无数据" />
-        </el-tab-pane>
+      <div class="summary-row">
+        <div class="summary-item">
+          <div class="summary-label">记录数</div>
+          <div class="summary-value">{{ dailySummary.recordCount || 0 }}</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">关联金额</div>
+          <div class="summary-value money">¥{{ dailySummary.totalAmount || 0 }}</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">佣金合计</div>
+          <div class="summary-value money highlight">¥{{ dailySummary.totalCommission || 0 }}</div>
+        </div>
+      </div>
 
-        <el-tab-pane label="技师佣金" name="technicians">
-          <el-table :data="dailyTechnicianCommissions" border>
-            <el-table-column prop="employee_name" label="员工姓名" width="150" />
-            <el-table-column prop="product_count" label="服务数量" width="120" />
-            <el-table-column prop="total_sales" label="业绩金额" width="150">
-              <template #default="{ row }">
-                ¥{{ row.total_sales || 0 }}
-              </template>
-            </el-table-column>
-            <el-table-column prop="commission" label="佣金金额" width="150">
-              <template #default="{ row }">
-                ¥{{ row.commission || 0 }}
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-empty v-if="dailyTechnicianCommissions.length === 0" description="暂无数据" />
-        </el-tab-pane>
-      </el-tabs>
+      <el-table :data="dailyCommissionRecords" border style="margin-top: 15px">
+        <el-table-column prop="employee_name" label="员工姓名" width="140" />
+        <el-table-column prop="position" label="职位" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.position === 'sales' ? 'primary' : 'success'">
+              {{ positionMap[row.position] }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="type" label="提成类型" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.type === 'card' ? 'warning' : 'info'">
+              {{ typeMap[row.type] }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="amount" label="关联订单金额" width="140">
+          <template #default="{ row }">
+            ¥{{ row.amount }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="commission_amount" label="提成金额" width="140">
+          <template #default="{ row }">
+            <span style="color: #F56C6C; font-weight: 500">¥{{ row.commission_amount }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="created_at" label="创建时间" min-width="180" />
+      </el-table>
+      <el-empty v-if="dailyCommissionRecords.length === 0" description="暂无数据" />
     </el-card>
 
     <el-dialog v-model="showSettingDialog" :title="isEditSetting ? '编辑佣金设置' : '新增佣金设置'" width="500px">
@@ -105,11 +112,11 @@
         </el-form-item>
         <el-form-item label="佣金类型">
           <el-radio-group v-model="settingForm.commission_type">
-            <el-radio label="rate">按比例</el-radio>
+            <el-radio label="percentage">按比例</el-radio>
             <el-radio label="fixed">固定金额</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="settingForm.commission_type === 'rate'" label="佣金比例">
+        <el-form-item v-if="settingForm.commission_type === 'percentage'" label="佣金比例">
           <el-input-number v-model="settingForm.commission_rate" :min="0" :max="100" :precision="2" />
           <span style="margin-left: 10px">%</span>
         </el-form-item>
@@ -141,19 +148,25 @@ import dayjs from 'dayjs'
 const positionMap = {
   sales: '销售',
   technician: '技师',
-  manager: '经理'
+  manager: '经理',
+  cashier: '收银'
+}
+
+const typeMap = {
+  card: '办卡',
+  product: '商品'
 }
 
 const commissionTypeMap = {
+  percentage: '按比例',
   rate: '按比例',
   fixed: '固定金额'
 }
 
 const commissionSettings = ref([])
-const dailySalesCommissions = ref([])
-const dailyTechnicianCommissions = ref([])
+const dailyCommissionRecords = ref([])
+const dailySummary = ref({})
 const selectedDate = ref(dayjs().format('YYYY-MM-DD'))
-const activeTab = ref('sales')
 
 const showSettingDialog = ref(false)
 const isEditSetting = ref(false)
@@ -161,8 +174,8 @@ const editSettingId = ref(null)
 
 const settingForm = reactive({
   position: 'sales',
-  commission_type: 'rate',
-  commission_rate: 10,
+  commission_type: 'percentage',
+  commission_rate: 5,
   fixed_amount: 0
 })
 
@@ -177,8 +190,12 @@ const loadDailyCommissions = async () => {
   if (!selectedDate.value) return
   const res = await getDailyCommissions(selectedDate.value)
   if (res.success) {
-    dailySalesCommissions.value = res.data.sales || []
-    dailyTechnicianCommissions.value = res.data.technicians || []
+    dailyCommissionRecords.value = res.data.records || []
+    dailySummary.value = {
+      recordCount: res.data.recordCount || 0,
+      totalAmount: res.data.totalAmount || 0,
+      totalCommission: res.data.totalCommission || 0
+    }
   }
 }
 
@@ -214,8 +231,8 @@ const resetSettingForm = () => {
   editSettingId.value = null
   Object.assign(settingForm, {
     position: 'sales',
-    commission_type: 'rate',
-    commission_rate: 10,
+    commission_type: 'percentage',
+    commission_rate: 5,
     fixed_amount: 0
   })
 }
@@ -235,9 +252,43 @@ onMounted(() => {
   }
 
   .settings-card,
-  .statistics-card {
+  .records-card {
     :deep(.el-card__body) {
       padding: 20px;
+    }
+  }
+
+  .summary-row {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 10px;
+
+    .summary-item {
+      flex: 1;
+      padding: 15px 20px;
+      background: #f5f7fa;
+      border-radius: 8px;
+      text-align: center;
+
+      .summary-label {
+        font-size: 13px;
+        color: #909399;
+        margin-bottom: 8px;
+      }
+
+      .summary-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #303133;
+
+        &.money {
+          font-size: 22px;
+        }
+
+        &.highlight {
+          color: #F56C6C;
+        }
+      }
     }
   }
 }

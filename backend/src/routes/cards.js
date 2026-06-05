@@ -78,14 +78,34 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   const { member_id, card_type_id, salesperson_id } = req.body;
   
+  if (!salesperson_id) {
+    return res.status(400).json({ success: false, message: '请选择导购员' });
+  }
+  
   const cardType = db.prepare('SELECT * FROM card_types WHERE id = ?').get(card_type_id);
   if (!cardType) {
     return res.status(400).json({ success: false, message: '卡种不存在' });
   }
   
+  const salesperson = db.prepare('SELECT * FROM employees WHERE id = ? AND status = 1').get(salesperson_id);
+  if (!salesperson) {
+    return res.status(400).json({ success: false, message: '导购员不存在或已离职' });
+  }
+  
   const cardNo = 'C' + dayjs().format('YYYYMMDDHHmmss');
   const startDate = dayjs().format('YYYY-MM-DD');
   const endDate = dayjs().add(cardType.valid_days, 'day').format('YYYY-MM-DD');
+  
+  const commissionSetting = db.prepare('SELECT * FROM commission_settings WHERE position = ?').get(salesperson.position);
+  
+  let commissionAmount = 0;
+  if (commissionSetting) {
+    if (commissionSetting.commission_type === 'percentage' || commissionSetting.commission_type === 'rate') {
+      commissionAmount = cardType.price * (commissionSetting.commission_rate / 100);
+    } else if (commissionSetting.commission_type === 'fixed') {
+      commissionAmount = commissionSetting.fixed_amount;
+    }
+  }
   
   try {
     const result = db.prepare(`
@@ -101,6 +121,11 @@ router.post('/', (req, res) => {
       endDate, 
       salesperson_id
     );
+    
+    db.prepare(`
+      INSERT INTO commission_records (employee_id, type, related_id, amount, commission_amount)
+      VALUES (?, 'card', ?, ?, ?)
+    `).run(salesperson_id, result.lastInsertRowid, cardType.price, commissionAmount);
     
     res.json({ success: true, data: { id: result.lastInsertRowid, card_no: cardNo } });
   } catch (error) {

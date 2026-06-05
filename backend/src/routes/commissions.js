@@ -40,44 +40,73 @@ router.put('/settings/:id', (req, res) => {
   }
 });
 
+router.get('/records', (req, res) => {
+  const { startDate, endDate, type, employeeId, page = 1, pageSize = 20 } = req.query;
+  const offset = (page - 1) * pageSize;
+  
+  let sql = `
+    SELECT cr.*, e.name as employee_name, e.position
+    FROM commission_records cr
+    JOIN employees e ON cr.employee_id = e.id
+    WHERE 1=1
+  `;
+  let countSql = 'SELECT COUNT(*) as total FROM commission_records WHERE 1=1';
+  const params = [];
+  
+  if (startDate) {
+    sql += ' AND DATE(cr.created_at) >= ?';
+    countSql += ' AND DATE(created_at) >= ?';
+    params.push(startDate);
+  }
+  
+  if (endDate) {
+    sql += ' AND DATE(cr.created_at) <= ?';
+    countSql += ' AND DATE(created_at) <= ?';
+    params.push(endDate);
+  }
+  
+  if (type) {
+    sql += ' AND cr.type = ?';
+    countSql += ' AND type = ?';
+    params.push(type);
+  }
+  
+  if (employeeId) {
+    sql += ' AND cr.employee_id = ?';
+    countSql += ' AND employee_id = ?';
+    params.push(employeeId);
+  }
+  
+  sql += ' ORDER BY cr.created_at DESC LIMIT ? OFFSET ?';
+  
+  const records = db.prepare(sql).all(...params, parseInt(pageSize), offset);
+  const { total } = db.prepare(countSql).get(...params);
+  
+  res.json({ success: true, data: records, total });
+});
+
 router.get('/daily/:date', (req, res) => {
   const date = req.params.date;
   
-  const salesData = db.prepare(`
-    SELECT 
-      e.id as employee_id,
-      e.name as employee_name,
-      COUNT(mc.id) as card_count,
-      SUM(ct.price) as total_sales,
-      SUM(ct.price * cs.commission_rate / 100) as commission
-    FROM member_cards mc
-    JOIN employees e ON mc.salesperson_id = e.id
-    JOIN card_types ct ON mc.card_type_id = ct.id
-    JOIN commission_settings cs ON e.position = cs.position
-    WHERE DATE(mc.created_at) = ?
-    GROUP BY e.id
+  const records = db.prepare(`
+    SELECT cr.*, e.name as employee_name, e.position
+    FROM commission_records cr
+    JOIN employees e ON cr.employee_id = e.id
+    WHERE DATE(cr.created_at) = ?
+    ORDER BY cr.created_at DESC
   `).all(date);
   
-  const technicianData = db.prepare(`
-    SELECT 
-      e.id as employee_id,
-      e.name as employee_name,
-      COUNT(cr.id) as product_count,
-      SUM(cr.amount) as total_sales,
-      SUM(p.commission_amount) as commission
-    FROM consumption_records cr
-    JOIN employees e ON cr.technician_id = e.id
-    JOIN products p ON cr.product_id = p.id
-    WHERE DATE(cr.created_at) = ? AND cr.consumption_type = 'product'
-    GROUP BY e.id
-  `).all(date);
+  const totalCommission = records.reduce((sum, r) => sum + r.commission_amount, 0);
+  const totalAmount = records.reduce((sum, r) => sum + r.amount, 0);
   
   res.json({ 
     success: true, 
-    data: { 
-      sales: salesData, 
-      technicians: technicianData 
-    } 
+    data: {
+      records,
+      totalCommission,
+      totalAmount,
+      recordCount: records.length
+    }
   });
 });
 
@@ -92,34 +121,21 @@ router.get('/salary/:month', (req, res) => {
     let cardCommission = 0;
     let productCommission = 0;
     
-    if (emp.position === 'sales') {
-      const salesResult = db.prepare(`
-        SELECT 
-          COUNT(mc.id) as card_count,
-          SUM(ct.price) as total_sales,
-          SUM(ct.price * cs.commission_rate / 100) as commission
-        FROM member_cards mc
-        JOIN card_types ct ON mc.card_type_id = ct.id
-        JOIN commission_settings cs ON cs.position = 'sales'
-        WHERE mc.salesperson_id = ? AND DATE(mc.created_at) BETWEEN ? AND ?
-      `).get(emp.id, startDate, endDate);
-      
-      cardCommission = salesResult.commission || 0;
-    }
+    const cardResult = db.prepare(`
+      SELECT SUM(commission_amount) as commission
+      FROM commission_records
+      WHERE employee_id = ? AND type = 'card'
+        AND DATE(created_at) BETWEEN ? AND ?
+    `).get(emp.id, startDate, endDate);
+    cardCommission = cardResult.commission || 0;
     
-    if (emp.position === 'technician') {
-      const techResult = db.prepare(`
-        SELECT 
-          COUNT(cr.id) as product_count,
-          SUM(p.commission_amount) as commission
-        FROM consumption_records cr
-        JOIN products p ON cr.product_id = p.id
-        WHERE cr.technician_id = ? AND cr.consumption_type = 'product'
-          AND DATE(cr.created_at) BETWEEN ? AND ?
-      `).get(emp.id, startDate, endDate);
-      
-      productCommission = techResult.commission || 0;
-    }
+    const productResult = db.prepare(`
+      SELECT SUM(commission_amount) as commission
+      FROM commission_records
+      WHERE employee_id = ? AND type = 'product'
+        AND DATE(created_at) BETWEEN ? AND ?
+    `).get(emp.id, startDate, endDate);
+    productCommission = productResult.commission || 0;
     
     const totalSalary = emp.base_salary + cardCommission + productCommission;
     
@@ -154,29 +170,21 @@ router.post('/salary/generate', (req, res) => {
     let cardCommission = 0;
     let productCommission = 0;
     
-    if (emp.position === 'sales') {
-      const salesResult = db.prepare(`
-        SELECT SUM(ct.price * cs.commission_rate / 100) as commission
-        FROM member_cards mc
-        JOIN card_types ct ON mc.card_type_id = ct.id
-        JOIN commission_settings cs ON cs.position = 'sales'
-        WHERE mc.salesperson_id = ? AND DATE(mc.created_at) BETWEEN ? AND ?
-      `).get(emp.id, startDate, endDate);
-      
-      cardCommission = salesResult.commission || 0;
-    }
+    const cardResult = db.prepare(`
+      SELECT SUM(commission_amount) as commission
+      FROM commission_records
+      WHERE employee_id = ? AND type = 'card'
+        AND DATE(created_at) BETWEEN ? AND ?
+    `).get(emp.id, startDate, endDate);
+    cardCommission = cardResult.commission || 0;
     
-    if (emp.position === 'technician') {
-      const techResult = db.prepare(`
-        SELECT SUM(p.commission_amount) as commission
-        FROM consumption_records cr
-        JOIN products p ON cr.product_id = p.id
-        WHERE cr.technician_id = ? AND cr.consumption_type = 'product'
-          AND DATE(cr.created_at) BETWEEN ? AND ?
-      `).get(emp.id, startDate, endDate);
-      
-      productCommission = techResult.commission || 0;
-    }
+    const productResult = db.prepare(`
+      SELECT SUM(commission_amount) as commission
+      FROM commission_records
+      WHERE employee_id = ? AND type = 'product'
+        AND DATE(created_at) BETWEEN ? AND ?
+    `).get(emp.id, startDate, endDate);
+    productCommission = productResult.commission || 0;
     
     const totalSalary = emp.base_salary + cardCommission + productCommission;
     

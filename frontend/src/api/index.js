@@ -216,6 +216,14 @@ export function getDailyCommissions(date) {
   })
 }
 
+export function getCommissionRecords(params) {
+  return request({
+    url: '/commissions/records',
+    method: 'get',
+    params
+  })
+}
+
 export function generateSalary(month) {
   return request({
     url: '/commissions/salary/generate',

@@ -10,13 +10,25 @@ router.get('/overview', (req, res) => {
   const memberCount = db.prepare('SELECT COUNT(*) as count FROM members').get().count;
   const activeCardCount = db.prepare('SELECT COUNT(*) as count FROM member_cards WHERE status = 1').get().count;
   
-  const todaySales = db.prepare(`
+  const consumptionStats = db.prepare(`
     SELECT 
       COUNT(*) as order_count,
       COALESCE(SUM(amount), 0) as total_amount
     FROM consumption_records 
     WHERE DATE(created_at) = ?
   `).get(today);
+  
+  const cardSalesStats = db.prepare(`
+    SELECT 
+      COUNT(*) as card_count,
+      COALESCE(SUM(ct.price), 0) as card_amount
+    FROM member_cards mc
+    JOIN card_types ct ON mc.card_type_id = ct.id
+    WHERE DATE(mc.created_at) = ?
+  `).get(today);
+  
+  const todayOrderCount = consumptionStats.order_count + cardSalesStats.card_count;
+  const todaySalesAmount = consumptionStats.total_amount + cardSalesStats.card_amount;
   
   const todayNewMembers = db.prepare(`
     SELECT COUNT(*) as count FROM members WHERE DATE(created_at) = ?
@@ -31,8 +43,8 @@ router.get('/overview', (req, res) => {
     data: {
       memberCount,
       activeCardCount,
-      todayOrderCount: todaySales.order_count,
-      todaySalesAmount: todaySales.total_amount,
+      todayOrderCount,
+      todaySalesAmount,
       todayNewMembers,
       todayNewCards
     }

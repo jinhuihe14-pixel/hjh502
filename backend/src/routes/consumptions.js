@@ -49,6 +49,10 @@ router.get('/', (req, res) => {
 router.post('/product', (req, res) => {
   const { member_id, product_id, quantity, technician_id, amount } = req.body;
   
+  if (!technician_id) {
+    return res.status(400).json({ success: false, message: '请选择技师' });
+  }
+  
   try {
     const product = db.prepare('SELECT * FROM products WHERE id = ?').get(product_id);
     
@@ -60,12 +64,33 @@ router.post('/product', (req, res) => {
       return res.status(400).json({ success: false, message: '库存不足' });
     }
     
+    const technician = db.prepare('SELECT * FROM employees WHERE id = ? AND status = 1').get(technician_id);
+    if (!technician) {
+      return res.status(400).json({ success: false, message: '技师不存在或已离职' });
+    }
+    
     db.prepare('UPDATE products SET stock = stock - ? WHERE id = ?').run(quantity, product_id);
     
     const result = db.prepare(`
       INSERT INTO consumption_records (member_id, consumption_type, product_id, quantity, amount, technician_id)
       VALUES (?, 'product', ?, ?, ?, ?)
     `).run(member_id, product_id, quantity, amount, technician_id);
+    
+    const commissionSetting = db.prepare('SELECT * FROM commission_settings WHERE position = ?').get(technician.position);
+    
+    let commissionAmount = 0;
+    if (commissionSetting) {
+      if (commissionSetting.commission_type === 'percentage' || commissionSetting.commission_type === 'rate') {
+        commissionAmount = amount * (commissionSetting.commission_rate / 100);
+      } else if (commissionSetting.commission_type === 'fixed') {
+        commissionAmount = commissionSetting.fixed_amount;
+      }
+    }
+    
+    db.prepare(`
+      INSERT INTO commission_records (employee_id, type, related_id, amount, commission_amount)
+      VALUES (?, 'product', ?, ?, ?)
+    `).run(technician_id, result.lastInsertRowid, amount, commissionAmount);
     
     res.json({ success: true, data: { id: result.lastInsertRowid } });
   } catch (error) {
