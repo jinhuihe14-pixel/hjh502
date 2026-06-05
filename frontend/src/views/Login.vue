@@ -5,10 +5,10 @@
         <h1>🎠 淘气堡乐园管理系统</h1>
         <p>Indoor Playground Management System</p>
       </div>
-      <el-form ref="loginForm" :model="loginForm" :rules="loginRules" class="login-form">
+      <el-form ref="formRef" :model="formData" :rules="loginRules" class="login-form">
         <el-form-item prop="username">
           <el-input
-            v-model="loginForm.username"
+            v-model="formData.username"
             placeholder="请输入用户名"
             prefix-icon="User"
             size="large"
@@ -16,7 +16,7 @@
         </el-form-item>
         <el-form-item prop="password">
           <el-input
-            v-model="loginForm.password"
+            v-model="formData.password"
             type="password"
             placeholder="请输入密码"
             prefix-icon="Lock"
@@ -45,8 +45,9 @@ import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
+const formRef = ref(null)
 
-const loginForm = reactive({
+const formData = reactive({
   username: '',
   password: ''
 })
@@ -59,16 +60,22 @@ const loginRules = {
 const loading = ref(false)
 
 const handleLogin = async () => {
-  loading.value = true
-  try {
-    const res = await userStore.login(loginForm.username, loginForm.password)
-    if (res.success) {
-      ElMessage.success('登录成功')
-      router.push('/')
+  if (!formRef.value) return
+  
+  await formRef.value.validate(async (valid) => {
+    if (valid) {
+      loading.value = true
+      try {
+        const res = await userStore.login(formData.username, formData.password)
+        if (res.success) {
+          ElMessage.success('登录成功')
+          router.push('/')
+        }
+      } finally {
+        loading.value = false
+      }
     }
-  } finally {
-    loading.value = false
-  }
+  })
 }
 </script>
 

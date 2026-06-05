@@ -45,6 +45,29 @@ export function getCardTypes() {
   })
 }
 
+export function getCardType(id) {
+  return request({
+    url: `/cards/types/${id}`,
+    method: 'get'
+  })
+}
+
+export function createCardType(data) {
+  return request({
+    url: '/cards/types',
+    method: 'post',
+    data
+  })
+}
+
+export function updateCardType(id, data) {
+  return request({
+    url: `/cards/types/${id}`,
+    method: 'put',
+    data
+  })
+}
+
 export function getMemberCards(params) {
   return request({
     url: '/cards',
@@ -167,6 +190,22 @@ export function getCommissionSettings() {
   return request({
     url: '/commissions/settings',
     method: 'get'
+  })
+}
+
+export function createCommissionSetting(data) {
+  return request({
+    url: '/commissions/settings',
+    method: 'post',
+    data
+  })
+}
+
+export function updateCommissionSetting(id, data) {
+  return request({
+    url: `/commissions/settings/${id}`,
+    method: 'put',
+    data
   })
 }
 
