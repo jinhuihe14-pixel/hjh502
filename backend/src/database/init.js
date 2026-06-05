@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const bcrypt = require('bcryptjs');
+const dayjs = require('dayjs');
 
 const dbPath = path.join(__dirname, '../../data/playground.db');
 const db = new Database(dbPath);
@@ -203,7 +204,30 @@ commissionSettings.forEach(setting => {
   insertCommission.run(setting.position, setting.commission_type, setting.commission_rate, setting.fixed_amount);
 });
 
+const members = [
+  { member_no: 'M20260601000001', child_name: '小明', child_age: 5, child_gender: 'male', parent_name: '王明', phone: '13800138011', address: '北京市朝阳区', qr_code: 'qr-uuid-001' },
+  { member_no: 'M20260601000002', child_name: '小红', child_age: 4, child_gender: 'female', parent_name: '李芳', phone: '13800138012', address: '北京市海淀区', qr_code: 'qr-uuid-002' },
+  { member_no: 'M20260601000003', child_name: '小华', child_age: 6, child_gender: 'male', parent_name: '张伟', phone: '13800138013', address: '北京市西城区', qr_code: 'qr-uuid-003' }
+];
+
+const insertMember = db.prepare('INSERT INTO members (member_no, child_name, child_age, child_gender, parent_name, phone, address, qr_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+members.forEach(member => {
+  insertMember.run(member.member_no, member.child_name, member.child_age, member.child_gender, member.parent_name, member.phone, member.address, member.qr_code);
+});
+
+const memberCards = [
+  { member_id: 1, card_type_id: 2, card_no: 'C20260601000001', remaining_times: 10, total_times: 10, start_date: dayjs().format('YYYY-MM-DD'), end_date: dayjs().add(180, 'day').format('YYYY-MM-DD'), salesperson_id: 1 },
+  { member_id: 2, card_type_id: 3, card_no: 'C20260601000002', remaining_times: null, total_times: null, start_date: dayjs().format('YYYY-MM-DD'), end_date: dayjs().add(30, 'day').format('YYYY-MM-DD'), salesperson_id: 1 },
+  { member_id: 3, card_type_id: 2, card_no: 'C20260601000003', remaining_times: 7, total_times: 10, start_date: dayjs().subtract(30, 'day').format('YYYY-MM-DD'), end_date: dayjs().add(150, 'day').format('YYYY-MM-DD'), salesperson_id: 1 }
+];
+
+const insertMemberCard = db.prepare('INSERT INTO member_cards (member_id, card_type_id, card_no, remaining_times, total_times, start_date, end_date, salesperson_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+memberCards.forEach(card => {
+  insertMemberCard.run(card.member_id, card.card_type_id, card.card_no, card.remaining_times, card.total_times, card.start_date, card.end_date, card.salesperson_id);
+});
+
 console.log('数据库初始化完成！');
 console.log('默认登录账号: admin / 123456');
+console.log('初始会员账号: M20260601000001, M20260601000002, M20260601000003');
 
 db.close();

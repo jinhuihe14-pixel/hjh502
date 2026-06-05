@@ -57,7 +57,7 @@ router.get('/:id', (req, res) => {
 });
 
 router.get('/qr/:qrCode', (req, res) => {
-  const member = db.prepare('SELECT * FROM members WHERE qr_code = ?').get(req.params.qrCode);
+  const member = db.prepare('SELECT * FROM members WHERE qr_code = ? OR member_no = ?').get(req.params.qrCode, req.params.qrCode);
   
   if (!member) {
     return res.status(404).json({ success: false, message: '会员不存在' });
