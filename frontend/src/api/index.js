@@ -116,9 +116,30 @@ export function updateSession(id, data) {
 
 export function walkInPurchase(data) {
   return request({
-    url: '/sessions/walk-in',
+    url: '/tickets/purchase',
     method: 'post',
     data
+  })
+}
+
+export function getTicket(ticketNo) {
+  return request({
+    url: `/tickets/${ticketNo}`,
+    method: 'get'
+  })
+}
+
+export function refundTicket(ticketNo) {
+  return request({
+    url: `/tickets/${ticketNo}/refund`,
+    method: 'post'
+  })
+}
+
+export function getSessionTickets(sessionId) {
+  return request({
+    url: `/tickets/session/${sessionId}`,
+    method: 'get'
   })
 }
 

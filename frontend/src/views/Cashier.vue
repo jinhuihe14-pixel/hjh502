@@ -1,5 +1,20 @@
 <template>
   <div class="cashier">
+    <div v-if="warningSessions.length > 0" class="warning-banners">
+      <div
+        v-for="session in warningSessions"
+        :key="session.id"
+        class="warning-banner"
+        :class="{ 'banner-full': session.current_count >= session.max_capacity, 'banner-near': session.current_count < session.max_capacity }"
+      >
+        <el-icon class="banner-icon"><WarningFilled /></el-icon>
+        <span class="banner-text">
+          【{{ session.session_name }}】
+          {{ session.current_count >= session.max_capacity ? '已满场' : `即将满场（当前 ${session.current_count}/${session.max_capacity} 人）` }}
+        </span>
+      </div>
+    </div>
+
     <el-row :gutter="20">
       <el-col :span="16">
         <el-card>
@@ -9,6 +24,7 @@
               <el-tabs v-model="activeTab" type="card">
                 <el-tab-pane label="会员核销" name="member" />
                 <el-tab-pane label="散客购票" name="walkin" />
+                <el-tab-pane label="退票" name="refund" />
                 <el-tab-pane label="二次消费" name="product" />
               </el-tabs>
             </div>
@@ -99,31 +115,107 @@
                 :label="session.id"
                 :disabled="session.current_count >= session.max_capacity"
               >
-                {{ session.session_name }} ({{ session.current_count }}/{{ session.max_capacity }})
-                <el-tag v-if="session.current_count >= session.max_capacity * 0.9" type="danger" size="small">
+                <span :class="{ 'session-full': session.current_count >= session.max_capacity }">
+                  {{ session.session_name }}
+                  <span v-if="session.current_count >= session.max_capacity">（已满场）</span>
+                  <span v-else>（剩余 {{ session.max_capacity - session.current_count }} 人）</span>
+                </span>
+                <el-tag v-if="session.current_count >= session.max_capacity * 0.9" :type="session.current_count >= session.max_capacity ? 'danger' : 'warning'" size="small" style="margin-left: 8px">
                   {{ session.current_count >= session.max_capacity ? '已满' : '即将满场' }}
                 </el-tag>
               </el-radio>
             </el-radio-group>
 
-            <h4>选择票种</h4>
-            <el-select v-model="walkinTicket" placeholder="请选择票种" style="width: 100%; margin-bottom: 20px">
-              <el-option
-                v-for="ticket in singleTickets"
-                :key="ticket.id"
-                :label="ticket.name + ' - ¥' + ticket.price"
-                :value="ticket"
-              />
-            </el-select>
+            <el-form :model="walkinForm" label-width="100px" style="margin-top: 20px">
+              <el-form-item label="选择票种">
+                <el-select v-model="walkinForm.card_type_id" placeholder="请选择票种" style="width: 100%">
+                  <el-option
+                    v-for="ticket in singleTickets"
+                    :key="ticket.id"
+                    :label="ticket.name + ' - ¥' + ticket.price"
+                    :value="ticket.id"
+                  />
+                </el-select>
+              </el-form-item>
+
+              <el-form-item label="入场人数" :error="walkinForm.quantity > remainingCapacity ? `超出场次剩余容量 ${walkinForm.quantity - remainingCapacity} 人` : ''">
+                <el-input-number
+                  v-model="walkinForm.quantity"
+                  :min="1"
+                  :max="99"
+                  :class="{ 'input-error': walkinForm.quantity > remainingCapacity }"
+                  @change="validateWalkinQuantity"
+                />
+                <span v-if="selectedWalkinSession" class="remaining-hint">
+                  剩余可入场: {{ remainingCapacity }} 人
+                </span>
+              </el-form-item>
+
+              <el-form-item label="联系电话">
+                <el-input v-model="walkinForm.contact_phone" placeholder="选填" maxlength="11" />
+              </el-form-item>
+
+              <el-form-item label="金额">
+                <span class="amount-display">¥{{ walkinTotalAmount }}</span>
+              </el-form-item>
+            </el-form>
 
             <el-button
               type="primary"
               size="large"
-              :disabled="!walkinSession || !walkinTicket"
+              :disabled="!walkinSession || !walkinForm.card_type_id || walkinForm.quantity > remainingCapacity || walkinForm.quantity < 1"
               @click="handleWalkin"
+              style="width: 100%; margin-top: 10px"
             >
-              确认购票 ¥{{ walkinTicket?.price || 0 }}
+              确认购票 ¥{{ walkinTotalAmount }}
             </el-button>
+          </div>
+
+          <div v-if="activeTab === 'refund'" class="refund-section">
+            <el-input
+              v-model="refundTicketNo"
+              placeholder="请输入票号"
+              size="large"
+              clearable
+              @keyup.enter="searchTicket"
+              style="margin-bottom: 20px"
+            >
+              <template #append>
+                <el-button type="primary" @click="searchTicket">
+                  <el-icon><Search /></el-icon>
+                  查询
+                </el-button>
+              </template>
+            </el-input>
+
+            <div v-if="refundTicketInfo" class="refund-ticket-info">
+              <el-descriptions :column="2" border>
+                <el-descriptions-item label="票号">{{ refundTicketInfo.ticket_no }}</el-descriptions-item>
+                <el-descriptions-item label="状态">
+                  <el-tag :type="refundTicketInfo.status === 'valid' ? 'success' : 'info'">
+                    {{ refundTicketInfo.status === 'valid' ? '有效' : '已退票' }}
+                  </el-tag>
+                </el-descriptions-item>
+                <el-descriptions-item label="场次">{{ refundTicketInfo.session_name }}</el-descriptions-item>
+                <el-descriptions-item label="场次时间">
+                  {{ refundTicketInfo.date }} {{ formatTime(refundTicketInfo.start_time) }}-{{ formatTime(refundTicketInfo.end_time) }}
+                </el-descriptions-item>
+                <el-descriptions-item label="入场人数">{{ refundTicketInfo.quantity }} 人</el-descriptions-item>
+                <el-descriptions-item label="金额">¥{{ refundTicketInfo.amount }}</el-descriptions-item>
+                <el-descriptions-item label="购票时间">{{ refundTicketInfo.created_at }}</el-descriptions-item>
+                <el-descriptions-item label="联系电话">{{ refundTicketInfo.contact_phone || '-' }}</el-descriptions-item>
+              </el-descriptions>
+
+              <el-button
+                type="danger"
+                size="large"
+                :disabled="refundTicketInfo.status !== 'valid'"
+                @click="showRefundConfirm = true"
+                style="width: 100%; margin-top: 20px"
+              >
+                确认退票
+              </el-button>
+            </div>
           </div>
 
           <div v-if="activeTab === 'product'" class="product-purchase">
@@ -173,7 +265,7 @@
           </template>
           <div class="quick-actions">
             <el-button type="primary" plain style="width: 100%; margin-bottom: 10px" @click="showNewMember = true">
-              <el-icon><UserPlus /></el-icon>
+              <el-icon><UserFilled /></el-icon>
               新会员注册
             </el-button>
             <el-button type="success" plain style="width: 100%; margin-bottom: 10px" @click="showNewCard = true">
@@ -200,6 +292,57 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <el-dialog v-model="showSuccessDialog" title="购票成功" width="450px" :close-on-click-modal="false">
+      <div class="success-ticket">
+        <div class="success-icon">
+          <el-icon :size="60" color="#67C23A"><CircleCheckFilled /></el-icon>
+        </div>
+        <div class="success-title">购票成功</div>
+        <div class="ticket-detail">
+          <div class="detail-row">
+            <span class="label">票号</span>
+            <span class="value ticket-no">
+              {{ successTicket?.ticket_no }}
+              <el-button type="primary" link size="small" @click="copyTicketNo">
+                <el-icon><DocumentCopy /></el-icon>
+                复制
+              </el-button>
+            </span>
+          </div>
+          <div class="detail-row">
+            <span class="label">场次</span>
+            <span class="value">{{ successSession?.session_name }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">场次时间</span>
+            <span class="value">{{ successSession?.date }} {{ formatTime(successSession?.start_time) }}-{{ formatTime(successSession?.end_time) }}</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">入场人数</span>
+            <span class="value">{{ successTicket?.quantity }} 人</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">金额</span>
+            <span class="value amount">¥{{ successTicket?.amount }}</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="closeSuccessDialog">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showRefundConfirm" title="确认退票" width="400px">
+      <div class="refund-confirm-content">
+        <el-icon :size="40" color="#E6A23C"><WarningFilled /></el-icon>
+        <p>确定要退票吗？退票后将退回 {{ refundTicketInfo?.quantity }} 人入场名额，退款 ¥{{ refundTicketInfo?.amount }}。</p>
+      </div>
+      <template #footer>
+        <el-button @click="showRefundConfirm = false">取消</el-button>
+        <el-button type="danger" @click="confirmRefund">确认退票</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="showNewMember" title="新会员注册" width="500px">
       <el-form :model="newMemberForm" label-width="100px">
@@ -273,8 +416,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  Search,
+  UserFilled,
+  CreditCard,
+  WarningFilled,
+  CircleCheckFilled,
+  DocumentCopy
+} from '@element-plus/icons-vue'
 import {
   getMemberByQr,
   getTodaySessions,
@@ -286,7 +437,9 @@ import {
   createMemberCard,
   consumeCard,
   walkInPurchase,
-  createProductConsumption
+  createProductConsumption,
+  getTicket,
+  refundTicket
 } from '@/api'
 
 const activeTab = ref('member')
@@ -302,8 +455,16 @@ const salespersons = ref([])
 const memberOptions = ref([])
 
 const walkinSession = ref(null)
-const walkinTicket = ref(null)
+const walkinForm = reactive({
+  card_type_id: null,
+  quantity: 1,
+  contact_phone: ''
+})
 const singleTickets = ref([])
+
+const refundTicketNo = ref('')
+const refundTicketInfo = ref(null)
+const showRefundConfirm = ref(false)
 
 const selectedProduct = ref(null)
 const selectedTechnician = ref(null)
@@ -311,6 +472,9 @@ const productQty = ref(1)
 
 const showNewMember = ref(false)
 const showNewCard = ref(false)
+const showSuccessDialog = ref(false)
+const successTicket = ref(null)
+const successSession = ref(null)
 
 const newMemberForm = reactive({
   child_name: '',
@@ -326,6 +490,35 @@ const newCardForm = reactive({
   card_type_id: null,
   salesperson_id: null
 })
+
+const warningSessions = computed(() => {
+  return todaySessions.value.filter(s => s.current_count >= s.max_capacity * 0.9)
+})
+
+const selectedWalkinSession = computed(() => {
+  if (!walkinSession.value) return null
+  return todaySessions.value.find(s => s.id === walkinSession.value)
+})
+
+const remainingCapacity = computed(() => {
+  if (!selectedWalkinSession.value) return 0
+  return selectedWalkinSession.value.max_capacity - selectedWalkinSession.value.current_count
+})
+
+const walkinTotalAmount = computed(() => {
+  if (!walkinForm.card_type_id || !walkinForm.quantity) return 0
+  const ticket = singleTickets.value.find(t => t.id === walkinForm.card_type_id)
+  if (!ticket) return 0
+  return ticket.price * walkinForm.quantity
+})
+
+const formatTime = (time) => {
+  if (!time) return ''
+  if (time.length >= 5) {
+    return time.substring(0, 5)
+  }
+  return time
+}
 
 const searchMember = async () => {
   if (!qrCode.value) {
@@ -361,21 +554,83 @@ const handleCheckin = async () => {
   } catch (e) {}
 }
 
+const validateWalkinQuantity = () => {
+  // 仅用于触发 computed 重新计算
+}
+
 const handleWalkin = async () => {
-  if (!walkinSession.value || !walkinTicket.value) return
+  if (!walkinSession.value || !walkinForm.card_type_id) return
+  if (walkinForm.quantity > remainingCapacity.value) {
+    ElMessage.error(`超出场次剩余容量 ${walkinForm.quantity - remainingCapacity.value} 人`)
+    return
+  }
   
   try {
     const res = await walkInPurchase({
       session_id: walkinSession.value,
-      amount: walkinTicket.value.price
+      quantity: walkinForm.quantity,
+      amount: walkinTotalAmount.value,
+      card_type_id: walkinForm.card_type_id,
+      contact_phone: walkinForm.contact_phone || null
     })
     if (res.success) {
-      ElMessage.success('购票成功')
-      if (res.isNearFull) {
-        ElMessage.warning('该场次即将满场！')
-      }
+      successTicket.value = res.data.ticket
+      successSession.value = res.data.session
+      showSuccessDialog.value = true
+      
       walkinSession.value = null
-      walkinTicket.value = null
+      walkinForm.card_type_id = null
+      walkinForm.quantity = 1
+      walkinForm.contact_phone = ''
+      
+      loadSessions()
+    }
+  } catch (e) {}
+}
+
+const copyTicketNo = () => {
+  if (successTicket.value?.ticket_no) {
+    navigator.clipboard.writeText(successTicket.value.ticket_no)
+    ElMessage.success('票号已复制')
+  }
+}
+
+const closeSuccessDialog = () => {
+  showSuccessDialog.value = false
+  successTicket.value = null
+  successSession.value = null
+}
+
+const searchTicket = async () => {
+  if (!refundTicketNo.value) {
+    ElMessage.warning('请输入票号')
+    return
+  }
+  
+  refundTicketInfo.value = null
+  
+  try {
+    const res = await getTicket(refundTicketNo.value.trim())
+    if (res.success) {
+      refundTicketInfo.value = res.data
+    }
+  } catch (e) {
+    ElMessage.error('未找到该票号')
+  }
+}
+
+const confirmRefund = async () => {
+  if (!refundTicketInfo.value) return
+  
+  try {
+    const res = await refundTicket(refundTicketInfo.value.ticket_no)
+    if (res.success) {
+      ElMessage.success('退票成功')
+      showRefundConfirm.value = false
+      refundTicketInfo.value = res.data.session ? { ...refundTicketInfo.value, status: 'refunded' } : null
+      if (refundTicketInfo.value) {
+        refundTicketInfo.value.status = 'refunded'
+      }
       loadSessions()
     }
   } catch (e) {}
@@ -494,6 +749,40 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .cashier {
+  .warning-banners {
+    margin-bottom: 20px;
+    
+    .warning-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 20px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      font-weight: 500;
+      
+      &.banner-near {
+        background: #fdf6ec;
+        color: #e6a23c;
+        border: 1px solid #f5dab1;
+      }
+      
+      &.banner-full {
+        background: #fef0f0;
+        color: #f56c6c;
+        border: 1px solid #fbc4c4;
+      }
+      
+      .banner-icon {
+        font-size: 20px;
+      }
+      
+      .banner-text {
+        font-size: 14px;
+      }
+    }
+  }
+  
   .card-header {
     display: flex;
     justify-content: space-between;
@@ -549,6 +838,34 @@ onMounted(() => {
     .el-radio {
       display: block;
       margin-bottom: 15px;
+    }
+    
+    .session-full {
+      color: #909399;
+    }
+    
+    .remaining-hint {
+      margin-left: 10px;
+      font-size: 12px;
+      color: #909399;
+    }
+    
+    .input-error {
+      :deep(.el-input__wrapper) {
+        box-shadow: 0 0 0 1px #f56c6c inset;
+      }
+    }
+    
+    .amount-display {
+      font-size: 20px;
+      font-weight: bold;
+      color: #f56c6c;
+    }
+  }
+  
+  .refund-section {
+    .refund-ticket-info {
+      margin-top: 10px;
     }
   }
   
@@ -617,6 +934,73 @@ onMounted(() => {
         color: #606266;
         margin-top: 5px;
       }
+    }
+  }
+  
+  .success-ticket {
+    text-align: center;
+    
+    .success-icon {
+      margin-bottom: 10px;
+    }
+    
+    .success-title {
+      font-size: 20px;
+      font-weight: bold;
+      color: #67C23A;
+      margin-bottom: 20px;
+    }
+    
+    .ticket-detail {
+      text-align: left;
+      background: #f5f7fa;
+      border-radius: 8px;
+      padding: 20px;
+      
+      .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px dashed #ebeef5;
+        
+        &:last-child {
+          border-bottom: none;
+        }
+        
+        .label {
+          color: #909399;
+        }
+        
+        .value {
+          color: #303133;
+          font-weight: 500;
+          
+          &.ticket-no {
+            font-family: monospace;
+            font-size: 16px;
+            color: #409EFF;
+          }
+          
+          &.amount {
+            color: #f56c6c;
+            font-size: 18px;
+          }
+        }
+      }
+    }
+  }
+  
+  .refund-confirm-content {
+    text-align: center;
+    padding: 20px 0;
+    
+    .el-icon {
+      margin-bottom: 15px;
+    }
+    
+    p {
+      color: #606266;
+      line-height: 1.6;
     }
   }
 }
